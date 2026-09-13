@@ -338,14 +338,14 @@ $('saveWorkout').onclick=()=>{
  }else{
    data.workouts.push({
      id:uid(),name,date:new Date().toLocaleDateString('de-DE'),
-     completed:false,exercises:JSON.parse(JSON.stringify(builder))
+     completed:false,isTemplate:true,isHistory:false,exercises:JSON.parse(JSON.stringify(builder))
    });
    save();resetWorkoutEditor();toast('Workout gespeichert ✓');go('workout');
  }
 };
 
 function renderWorkouts(){
- const saved=data.workouts.filter(x=>!x.completed);
+ const saved=data.workouts.filter(x=>x.isHistory!==true && x.sourceWorkoutId==null);
  $('workoutList').innerHTML=saved.map(w=>`<div class="item"><div class="thumb">🏋️</div><div class="grow"><b>${w.name}</b><small>${(w.exercises||[]).length} Übungen · gespeichert ${w.date||''}</small></div><button class="outline" onclick="detail('${w.id}')">INFO</button><button class="outline" onclick="editWorkout('${w.id}')">BEARBEITEN</button><button class="outline" onclick="start('${w.id}')">START</button><button class="outline danger" onclick="deleteWorkout('${w.id}')">LÖSCHEN</button></div>`).join('')||'<p class="muted">Noch kein gespeichertes Workout.</p>';
  $('historyList').innerHTML=data.workouts.filter(x=>x.completed).slice().sort((a,b)=>new Date(b.finishedISO||0)-new Date(a.finishedISO||0)).map(w=>`<div class="item"><div class="thumb">✓</div><div class="grow" onclick="detail('${w.id}')"><b>${w.name}</b><small>${w.finishedISO?new Date(w.finishedISO).toLocaleString('de-DE'):w.date||''}${w.note?' · 📝 Notiz':''}${w.photo?' · 📷 Foto':''}${w.caloriesBurned?' · '+Math.round(w.caloriesBurned)+' kcal':''}</small></div><button class="outline" onclick="detail('${w.id}')">INFO</button><button class="outline danger" onclick="deleteWorkout('${w.id}')">LÖSCHEN</button></div>`).join('')||'<p class="muted">Noch kein abgeschlossener Verlauf.</p>';
 }
@@ -374,7 +374,7 @@ function renderActive(){
 
 window.markSet=(i,j)=>{active.exercises[i].sets[j].done=!active.exercises[i].sets[j].done;renderActive();if(active.exercises[i].sets[j].done)startTimer(active.exercises[i].pause)};
 window.startTimer=sec=>{clearInterval(timerInt);let end=Date.now()+sec*1000;timerInt=setInterval(()=>{let n=Math.max(0,Math.ceil((end-Date.now())/1000));$('timer').textContent=String(Math.floor(n/60)).padStart(2,'0')+':'+String(n%60).padStart(2,'0');if(!n)clearInterval(timerInt)},200)};
-$('skipRest').onclick=()=>{clearInterval(timerInt);$('timer').textContent='00:00'};
+$('skipRest').onclick=()=>{clearInterval(timerInt);if(window.__gymTimerBridge)clearInterval(window.__gymTimerBridge);$('timer').textContent='00:00'};
 $('finishWorkout').onclick=()=>{
  if(!active)return;
  if(active.exercises.some(e=>e.sets.some(s=>!s.done))&&!confirm('Noch nicht alle Sätze fertig. Trotzdem speichern?'))return;
@@ -407,8 +407,25 @@ function resetWorkoutEditor(){
 
 $('savePlan').onclick=()=>{data.plan.name=$('planName').value||'Mein Trainingsplan';data.plan.pause=+$('planPause').value||90;save();toast('Trainingsplan gespeichert ✓');go('plan')};
 $('addWorkoutToPlan').onclick=()=>{renderPlanWorkoutChoices();go('addPlanWorkout')};
-function renderPlanWorkoutChoices(){const sel=$('planWorkoutSelect');const available=data.workouts.filter(w=>!w.completed);sel.innerHTML=available.map(w=>`<option value="${w.id}">${w.name}</option>`).join('')||'<option value="">Noch keine Workouts vorhanden</option>';}
-$('savePlanWorkout').onclick=()=>{const workoutId=$('planWorkoutSelect').value;if(!workoutId){toast('Erstelle zuerst ein Workout');return}const day=$('planDay').value,time=$('planTime').value||'18:00';data.plan.items.push({id:uid(),workoutId,day,time});save();toast('Workout zum Plan hinzugefügt ✓');go('plan')};
+window.renderPlanWorkoutChoices=function(){
+ const sel=$('planWorkoutSelect'); if(!sel)return;
+ // A saved workout is a reusable template. Completed history entries are never used as templates.
+ const available=(data.workouts||[]).filter(w=>w && w.isHistory!==true && w.sourceWorkoutId==null);
+ sel.innerHTML=available.length
+   ? available.map(w=>`<option value="${w.id}">${String(w.name||'Workout')}</option>`).join('')
+   : '<option value="">Noch keine gespeicherten Workouts</option>';
+ sel.disabled=!available.length;
+ const btn=$('savePlanWorkout'); if(btn)btn.disabled=!available.length;
+};
+$('savePlanWorkout').onclick=()=>{
+ const workoutId=$('planWorkoutSelect').value;
+ const workout=(data.workouts||[]).find(w=>w.id===workoutId && w.isHistory!==true && w.sourceWorkoutId==null);
+ if(!workout){toast('Speichere zuerst ein Workout unter „Meine Workouts“');return}
+ const day=$('planDay').value,time=$('planTime').value||'18:00';
+ if(!Array.isArray(data.plan.items))data.plan.items=[];
+ data.plan.items.push({id:uid(),workoutId,day,time});
+ save();toast(`${workout.name} zum Plan hinzugefügt ✓`);go('plan');
+};
 window.removePlanWorkout=id=>{data.plan.items=data.plan.items.filter(x=>x.id!==id);save();render();toast('Workout aus dem Plan entfernt')};
 $('saveMeal').onclick=()=>{const n=$('mealName').value.trim();if(!n){toast('Name eingeben');return}data.meals.push({name:n,kcal:+$('mealKcal').value||0,protein:+$('mealProtein').value||0,fat:+$('mealFat').value||0,carbs:+$('mealCarbs').value||0,sugar:+$('mealSugar').value||0,fiber:+$('mealFiber').value||0,salt:+$('mealSalt').value||0,barcode:$('barcodeManual').value.trim(),date:new Date().toLocaleDateString('de-DE'),dateTime:new Date().toISOString()});save();toast('Mahlzeit gespeichert ✓');go('nutrition')};
 
@@ -478,11 +495,11 @@ $('reset').onclick=()=>{if(confirm('Alle gespeicherten Prototyp-Daten löschen?'
 
 function renderPlan(){
  const order={Montag:1,Dienstag:2,Mittwoch:3,Donnerstag:4,Freitag:5,Samstag:6,Sonntag:7};
- const items=(data.plan.items||[]).map(item=>{const w=data.workouts.find(x=>x.id===item.workoutId);return w?{...item,name:w.name,exercises:(w.exercises||[]).length}:null}).filter(Boolean).sort((a,b)=>(order[a.day]||9)-(order[b.day]||9)||String(a.time).localeCompare(String(b.time)));
+ const items=(data.plan.items||[]).map(item=>{const w=data.workouts.find(x=>x.id===item.workoutId && x.isHistory!==true && x.sourceWorkoutId==null);return w?{...item,name:w.name,exercises:(w.exercises||[]).length}:null}).filter(Boolean).sort((a,b)=>(order[a.day]||9)-(order[b.day]||9)||String(a.time).localeCompare(String(b.time)));
  $('planSchedule').innerHTML=items.length?items.map(x=>`<div class="item"><div class="thumb">🏋️</div><div class="grow"><b>${x.day} · ${x.time}</b><small>${x.name} · ${x.exercises} Übungen</small></div><button class="outline danger" onclick="removePlanWorkout('${x.id}')">✕</button></div>`).join(''):'<p class="muted">Noch keine Workouts eingeplant. Füge z. B. Workout 1 für Montag 18:00 und Workout 2 für Dienstag 17:30 hinzu.</p>';
 }
 
-function render(){renderExercises();renderWorkouts();renderBuilder();renderCalendar();renderPlan();$('planName').value=data.plan.name;$('planPause').value=data.plan.pause;$('defaultPause').value=data.plan.pause;$('mealList').innerHTML=data.meals.map(x=>`<div class="item"><div class="grow"><b>${x.name}</b><small>${x.kcal} kcal · Protein ${x.protein}g · Fett ${x.fat}g · KH ${x.carbs||0}g · Zucker ${x.sugar||0}g · Ballaststoffe ${x.fiber||0}g</small></div></div>`).join('')||'<p class="muted">Noch keine Mahlzeiten.</p>';$('diaryList').innerHTML=data.diary.map(x=>`<div class="item"><div class="grow"><b>${x.date}</b><small>${x.text}</small></div></div>`).join('')||'';$('notesList').innerHTML=data.notes.map(x=>`<div class="item"><div class="grow"><b>${x.title}</b><small>${x.text}</small></div></div>`).join('')||'';const done=data.workouts.filter(x=>x.completed);let vol=0,reps=0;done.forEach(w=>{let c=calc(w);vol+=c.vol;reps+=c.reps});$('aWorkouts').textContent=done.length;$('aVolume').textContent=Math.round(vol);$('aReps').textContent=reps;$('pWorkouts').textContent=done.length;$('pVolume').textContent=Math.round(vol);$('pRecords').textContent=done.reduce((a,w)=>a+(w.records||0),0);$('kcal').textContent=data.meals.reduce((a,x)=>a+x.kcal,0);$('protein').textContent=data.meals.reduce((a,x)=>a+x.protein,0)+' g';$('fat').textContent=data.meals.reduce((a,x)=>a+x.fat,0)+' g';renderWater();renderSupplements();$('progressList').innerHTML=data.exercises.map(e=>{let best=0;done.forEach(w=>w.exercises.filter(x=>x.exerciseId===e.id).forEach(x=>x.sets.forEach(s=>best=Math.max(best,+s.weight||0))));return `<div class="item"><div class="grow"><b>${e.name}</b><small>Bestleistung</small></div><strong class="g">${best} kg</strong></div>`}).join('');let vals=done.slice(-7).map(w=>calc(w).vol);$('chart').innerHTML=vals.map(v=>`<div style="height:${Math.max(5,Math.min(140,v/(Math.max(...vals,1))*140))}px"></div>`).join('');let first=new Date(2026,8,1).getDay(),off=(first+6)%7;let cal='';for(let i=0;i<off;i++)cal+='<span></span>';for(let d=1;d<=30;d++)cal+=`<span class="${d===12?'today ':''}">${d}</span>`;$('cal').innerHTML=cal}
+function render(){renderExercises();renderWorkouts();renderBuilder();renderCalendar();renderPlan();if($('planWorkoutSelect'))renderPlanWorkoutChoices();$('planName').value=data.plan.name;$('planPause').value=data.plan.pause;$('defaultPause').value=data.plan.pause;$('mealList').innerHTML=data.meals.map(x=>`<div class="item"><div class="grow"><b>${x.name}</b><small>${x.kcal} kcal · Protein ${x.protein}g · Fett ${x.fat}g · KH ${x.carbs||0}g · Zucker ${x.sugar||0}g · Ballaststoffe ${x.fiber||0}g</small></div></div>`).join('')||'<p class="muted">Noch keine Mahlzeiten.</p>';$('diaryList').innerHTML=data.diary.map(x=>`<div class="item"><div class="grow"><b>${x.date}</b><small>${x.text}</small></div></div>`).join('')||'';$('notesList').innerHTML=data.notes.map(x=>`<div class="item"><div class="grow"><b>${x.title}</b><small>${x.text}</small></div></div>`).join('')||'';const done=data.workouts.filter(x=>x.completed);let vol=0,reps=0;done.forEach(w=>{let c=calc(w);vol+=c.vol;reps+=c.reps});$('aWorkouts').textContent=done.length;$('aVolume').textContent=Math.round(vol);$('aReps').textContent=reps;$('pWorkouts').textContent=done.length;$('pVolume').textContent=Math.round(vol);$('pRecords').textContent=done.reduce((a,w)=>a+(w.records||0),0);$('kcal').textContent=data.meals.reduce((a,x)=>a+x.kcal,0);$('protein').textContent=data.meals.reduce((a,x)=>a+x.protein,0)+' g';$('fat').textContent=data.meals.reduce((a,x)=>a+x.fat,0)+' g';renderWater();renderSupplements();$('progressList').innerHTML=data.exercises.map(e=>{let best=0;done.forEach(w=>w.exercises.filter(x=>x.exerciseId===e.id).forEach(x=>x.sets.forEach(s=>best=Math.max(best,+s.weight||0))));return `<div class="item"><div class="grow"><b>${e.name}</b><small>Bestleistung</small></div><strong class="g">${best} kg</strong></div>`}).join('');let vals=done.slice(-7).map(w=>calc(w).vol);$('chart').innerHTML=vals.map(v=>`<div style="height:${Math.max(5,Math.min(140,v/(Math.max(...vals,1))*140))}px"></div>`).join('');let first=new Date(2026,8,1).getDay(),off=(first+6)%7;let cal='';for(let i=0;i<off;i++)cal+='<span></span>';for(let d=1;d<=30;d++)cal+=`<span class="${d===12?'today ':''}">${d}</span>`;$('cal').innerHTML=cal}
 
 function openAI(mode){
  $('aiModal').classList.add('on');
@@ -866,7 +883,7 @@ if($('themeClean'))$('themeClean').onclick=()=>{localStorage.setItem(THEME_KEY,'
   function setPerformance(s){const weight=effectiveSetWeight(s),reps=Number(s?.reps||0);return weight>0&&reps>0?{weight,reps}:null;}
   function betterPerformance(a,b){if(!a)return false;if(!b)return true;return a.weight>b.weight||(a.weight===b.weight&&a.reps>b.reps);}
   function formatPerformance(r){return r?`${r.weight} kg × ${r.reps}`:'—';}
-  function previousBest(exName){let best=null;(data.workouts||[]).forEach(w=>(w.exercises||[]).forEach(e=>{if(String(e.name).toLowerCase()!==String(exName).toLowerCase())return;(e.sets||e.series||[]).forEach(s=>{const perf=setPerformance(s);if(betterPerformance(perf,best))best=perf});if(e.bestRecord&&typeof e.bestRecord==='object'&&betterPerformance(e.bestRecord,best))best=e.bestRecord;const legacy=Number(e.bestRecord||e.record||e.best||e.max||e.weight||0);if(legacy>0&&betterPerformance({weight:legacy,reps:1},best))best={weight:legacy,reps:1};}));return best;}
+  function previousBest(exName){let best=null;(data.workouts||[]).filter(w=>w.completed===true || w.isHistory===true).forEach(w=>(w.exercises||[]).forEach(e=>{if(String(e.name).toLowerCase()!==String(exName).toLowerCase())return;(e.sets||e.series||[]).forEach(s=>{const perf=setPerformance(s);if(betterPerformance(perf,best))best=perf});if(e.bestRecord&&typeof e.bestRecord==='object'&&betterPerformance(e.bestRecord,best))best=e.bestRecord;const legacy=Number(e.bestRecord||e.record||e.best||e.max||e.weight||0);if(legacy>0&&betterPerformance({weight:legacy,reps:1},best))best={weight:legacy,reps:1};}));return best;}
 
   window.finishWorkoutV2=function(){
     const id=window._v2PendingWorkoutId;
@@ -884,6 +901,8 @@ if($('themeClean'))$('themeClean').onclick=()=>{localStorage.setItem(THEME_KEY,'
       history.id=uid();
       history.sourceWorkoutId=id;
       history.completed=true;
+      history.isHistory=true;
+      history.isTemplate=false;
       history.finishedISO=new Date().toISOString();
       history.date=new Date().toLocaleDateString('de-DE');
       history.note=note;
@@ -915,7 +934,7 @@ if($('themeClean'))$('themeClean').onclick=()=>{localStorage.setItem(THEME_KEY,'
   window.renderExerciseStats=function(){
     const sel=$('v2ExerciseSelect'), name=sel.value;
     const rows=[];
-    (data.workouts||[]).forEach(w=>{
+    (data.workouts||[]).filter(w=>w.completed===true || w.isHistory===true).forEach(w=>{
       (w.exercises||[]).forEach(e=>{
         if(String(e.name)===name){
           const vals=[];
@@ -950,7 +969,7 @@ if($('themeClean'))$('themeClean').onclick=()=>{localStorage.setItem(THEME_KEY,'
 
   window.renderAllRecords=function(){
     const map={};
-    (data.workouts||[]).forEach(w=>(w.exercises||[]).forEach(e=>{
+    (data.workouts||[]).filter(w=>w.completed===true || w.isHistory===true).forEach(w=>(w.exercises||[]).forEach(e=>{
       const name=e.name||'Übung', vals=[];
       ['bestRecord','record','best','max','weight','reps'].forEach(k=>{const v=Number(e[k]);if(v>0)vals.push(v)});
       const sets=e.sets||e.series;if(Array.isArray(sets))sets.forEach(s=>{['weight','reps'].forEach(k=>{const v=Number(s?.[k]);if(v>0)vals.push(v)})});
@@ -1399,12 +1418,12 @@ setTimeout(()=>{try{renderV4Popular()}catch(e){}},300);
 (function(){
   const $m=id=>document.getElementById(id);
   function completed(){return (window.data?.workouts||[]).filter(w=>w.completed)}
-  function calcVol(w){let v=0;(w.exercises||[]).forEach(e=>(e.sets||[]).forEach(s=>{v+=(Number(s.weight)||0)*(Number(s.reps)||0)}));return v}
+  function calcVol(w){let v=0;(w.exercises||[]).forEach(e=>(e.sets||[]).forEach(s=>{const load=(Number(s.bodyWeight)||0)+(Number(s.extraWeight)||0)+(Number(s.weight)||0);v+=load*(Number(s.reps)||0)}));return v}
   function weekStart(d){const x=new Date(d);const day=(x.getDay()+6)%7;x.setHours(0,0,0,0);x.setDate(x.getDate()-day);return x}
   function streak(){const dates=[...new Set(completed().map(w=>{const d=new Date(w.finishedISO||w.date);return isNaN(d)?null:d.toISOString().slice(0,10)}).filter(Boolean))].sort().reverse();if(!dates.length)return 0;let n=0,cur=new Date();cur.setHours(0,0,0,0);for(const ds of dates){const d=new Date(ds+'T00:00:00');const diff=Math.round((cur-d)/86400000);if(diff===0||diff===1){n++;cur=d}else break}return n}
   function totalVolume(){return completed().reduce((a,w)=>a+calcVol(w),0)}
   function recordsCount(){return completed().reduce((a,w)=>a+(Number(w.records)||0),0)}
-  function bestExercise(){const out={};completed().forEach(w=>(w.exercises||[]).forEach(e=>(e.sets||[]).forEach(s=>{const v=Number(s.weight)||0;if(v)out[e.name]=Math.max(out[e.name]||0,v)})));return out}
+  function bestExercise(){const out={};completed().forEach(w=>(w.exercises||[]).forEach(e=>(e.sets||[]).forEach(s=>{const v=(Number(s.bodyWeight)||0)+(Number(s.extraWeight)||0)+(Number(s.weight)||0);if(v)out[e.name]=Math.max(out[e.name]||0,v)})));return out}
   function ensure(){if(!data.goals)data.goals=[]}
   function renderDashboard(){
     ensure(); const now=new Date(), ws=weekStart(now); const ww=completed().filter(w=>{const d=new Date(w.finishedISO||w.date);return !isNaN(d)&&d>=ws});
